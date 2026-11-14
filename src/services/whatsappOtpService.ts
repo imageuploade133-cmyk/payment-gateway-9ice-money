@@ -19,14 +19,21 @@ export class WhatsAppOtpService {
    * Generates a cryptographically secure 6-digit OTP
    */
   private static generateOtp(): string {
-    return crypto.randomInt(100000, 999999).toString();
+    return crypto.randomInt(100000, 1000000).toString();
   }
 
   /**
    * Hashes the OTP using SHA-256
    */
   private static hashOtp(otp: string): string {
-    return crypto.createHash("sha256").update(otp).digest("hex");
+    return crypto.createHmac("sha256", env.OTP_HMAC_SECRET).update(otp).digest("hex");
+  }
+
+  private static hashesEqual(left: string, right: string): boolean {
+    if (!/^[a-f0-9]{64}$/i.test(left) || !/^[a-f0-9]{64}$/i.test(right)) return false;
+    const leftBuffer = Buffer.from(left, "hex");
+    const rightBuffer = Buffer.from(right, "hex");
+    return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
   }
 
   /**
@@ -165,7 +172,7 @@ export class WhatsAppOtpService {
   /**
    * Sends OTP via external WhatsApp gateway
    */
-  public static async sendOtp(phoneNumber: string, type: string = "signup"): Promise<{ message: string; devOtp?: string }> {
+  public static async sendOtp(phoneNumber: string, type: string = "signup"): Promise<{ message: string }> {
     const isProd = env.NODE_ENV === "production";
 
     let whatsappApiUrl = env.WHATSAPP_API_URL;
@@ -249,9 +256,9 @@ export class WhatsAppOtpService {
 
     // Selected random message templates to secure against automated pattern detection and spam filtering
     const messageTemplates = [
-      `Your E-Global Pay Access OTP verification code is: *${rawOtp}*. It expires in 10 minutes. Do not share this code with anyone.`,
-      `Security Alert: Use *${rawOtp}* to verify your E-Global Pay account phone number. This OTP is valid for 10 minutes.`,
-      `Your secure one-time passcode is *${rawOtp}* for E-Global Pay registration. Please enter this code to complete verification.`
+      `Your 9iceMoney Access OTP verification code is: *${rawOtp}*. It expires in 10 minutes. Do not share this code with anyone.`,
+      `Security Alert: Use *${rawOtp}* to verify your 9iceMoney account phone number. This OTP is valid for 10 minutes.`,
+      `Your secure one-time passcode is *${rawOtp}* for 9iceMoney registration. Please enter this code to complete verification.`
     ];
     const messageText = messageTemplates[crypto.randomInt(0, messageTemplates.length)];
 
@@ -376,15 +383,6 @@ export class WhatsAppOtpService {
       timestamp: now.toISOString(),
     });
 
-    // In development mode, we can return the OTP code for local debugging/tests
-    if (!isProd) {
-      logger.info(`[WhatsAppOtpService] [DEV MODE] OTP generated: ${rawOtp} for ${cleanPhone}`);
-      return {
-        message: "OTP sent successfully (Development Mode)",
-        devOtp: rawOtp,
-      };
-    }
-
     return {
       message: "OTP sent successfully via WhatsApp.",
     };
@@ -400,64 +398,67 @@ export class WhatsAppOtpService {
 
     const cleanPhone = phoneNumber.replace(/\D/g, "");
     const sessionDocRef = adminDb.collection("otp_sessions").doc(cleanPhone);
-    const sessionSnap = await sessionDocRef.get();
-
-    if (!sessionSnap.exists) {
-      throw new Error("No active verification session found. Please request a new OTP.");
-    }
-
-    const data = sessionSnap.data() as OtpSession;
-    const now = new Date();
-
-    // 1. Check if expired
-    if (now > new Date(data.expiresAt)) {
-      await sessionDocRef.delete();
-      throw new Error("Verification code has expired. Please request a new OTP.");
-    }
-
-    // 2. Validate hashed OTP
-    const hashedProvided = this.hashOtp(otpCode.trim());
-    if (hashedProvided !== data.otpHash) {
-      const updatedFailedAttempts = (data.failedAttempts || 0) + 1;
-
-      // Audit Log for failure
-      await adminDb.collection("otp_audits").add({
-        phoneNumber: cleanPhone,
-        type,
-        action: "VERIFY_FAILED",
-        timestamp: now.toISOString(),
-        attemptCount: updatedFailedAttempts,
-      });
-
-      if (updatedFailedAttempts >= 3) {
-        // Brute-force lockout: invalidate session permanently
-        await sessionDocRef.delete();
-        throw new Error("Too many failed attempts. This verification session has been terminated. Please generate a new OTP.");
-      } else {
-        await sessionDocRef.update({ failedAttempts: updatedFailedAttempts });
-        const remaining = 3 - updatedFailedAttempts;
-        throw new Error(`Incorrect verification code. You have ${remaining} attempts remaining before lockout.`);
+    const verification = await adminDb.runTransaction(async (transaction) => {
+      const sessionSnap = await transaction.get(sessionDocRef);
+      if (!sessionSnap.exists) {
+        return { success: false as const, error: "No active verification session found. Please request a new OTP." };
       }
-    }
 
-    // 3. Complete verification & delete or mark verified
-    // We mark it as verified so that registration completes successfully and checks this verified session
-    await sessionDocRef.update({
-      verified: true,
-      expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(), // Allow registration within 15 minutes
+      const data = sessionSnap.data() as OtpSession;
+      if (data.type !== type) {
+        return { success: false as const, error: "Verification code does not match the requested verification purpose." };
+      }
+
+      if (data.verified === true) {
+        return { success: true as const, message: "WhatsApp number was already verified." };
+      }
+
+      const now = new Date();
+      if (!data.expiresAt || now > new Date(data.expiresAt)) {
+        transaction.delete(sessionDocRef);
+        return { success: false as const, error: "Verification code has expired. Please request a new OTP." };
+      }
+
+      const attempts = Number(data.failedAttempts) || 0;
+      if (attempts >= 3) {
+        transaction.delete(sessionDocRef);
+        return { success: false as const, error: "Too many failed attempts. This verification session has been terminated. Please generate a new OTP." };
+      }
+
+      const hashedProvided = this.hashOtp(otpCode.trim());
+      if (!this.hashesEqual(hashedProvided, data.otpHash)) {
+        const nextAttempts = attempts + 1;
+        if (nextAttempts >= 3) {
+          transaction.delete(sessionDocRef);
+          return { success: false as const, error: "Too many failed attempts. This verification session has been terminated. Please generate a new OTP." };
+        }
+
+        transaction.update(sessionDocRef, { failedAttempts: nextAttempts });
+        return {
+          success: false as const,
+          error: `Incorrect verification code. You have ${3 - nextAttempts} attempts remaining before lockout.`,
+        };
+      }
+
+      transaction.update(sessionDocRef, {
+        verified: true,
+        expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+      });
+      return { success: true as const, message: "WhatsApp OTP verified successfully." };
     });
 
-    // Audit Log for success
     await adminDb.collection("otp_audits").add({
       phoneNumber: cleanPhone,
       type,
-      action: "VERIFY_SUCCESS",
-      timestamp: now.toISOString(),
+      action: verification.success ? "VERIFY_SUCCESS" : "VERIFY_ATTEMPT",
+      status: verification.success ? "SUCCESS" : "FAILED",
+      timestamp: new Date().toISOString(),
     });
 
+    if (!verification.success) throw new Error(verification.error);
     return {
       success: true,
-      message: "WhatsApp OTP verified successfully.",
+      message: verification.message,
     };
   }
 }
