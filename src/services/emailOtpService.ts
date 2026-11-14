@@ -58,8 +58,7 @@ export class EmailOtpService {
   /**
    * Sends a PIN Reset OTP via the WhatsAPI HUB Email API to the user's registered email.
    */
-  public static async sendPinResetOtp(uid: string, authEmail?: string): Promise<{ message: string; devOtp?: string }> {
-    const isProd = env.NODE_ENV === "production";
+  public static async sendPinResetOtp(uid: string, authEmail?: string): Promise<{ message: string }> {
     const emailApiUrl = env.EMAIL_API_URL;
     const emailApiKey = env.EMAIL_API_KEY;
     const emailInstanceId = env.EMAIL_INSTANCE_ID || "";
@@ -141,7 +140,7 @@ export class EmailOtpService {
 
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-        <h2 style="color: #FC7A00; margin-bottom: 16px;">E-Global Pay</h2>
+        <h2 style="color: #FC7A00; margin-bottom: 16px;">9iceMoney</h2>
         <p>Hello ${escapedName},</p>
         <p>Your one-time passcode (OTP) for PIN reset is:</p>
         <div style="background-color: #f4f4f4; padding: 15px; font-size: 24px; font-weight: bold; text-align: center; letter-spacing: 5px; color: #333; margin: 20px 0; border-radius: 4px;">
@@ -185,7 +184,7 @@ export class EmailOtpService {
           headers,
           body: JSON.stringify({
             to: userEmail,
-            subject: "Your E-Global Pay OTP",
+            subject: "Your 9iceMoney OTP",
             html: htmlContent,
           }),
           signal: controller.signal,
@@ -241,14 +240,6 @@ export class EmailOtpService {
       timestamp: now.toISOString(),
     });
 
-    if (!isProd) {
-      logger.info(`[EmailOtpService] [DEV MODE] Email OTP code: ${rawOtp} for ${userEmail}`);
-      return {
-        message: "PIN reset OTP sent to registered email address.",
-        devOtp: rawOtp,
-      };
-    }
-
     return {
       message: "PIN reset OTP sent to registered email address.",
     };
@@ -264,69 +255,68 @@ export class EmailOtpService {
 
     const docId = `pin_reset_email_${uid}`;
     const sessionDocRef = adminDb.collection("otp_sessions").doc(docId);
-    const sessionSnap = await sessionDocRef.get();
-
-    if (!sessionSnap.exists) {
-      throw new Error("No active email verification session found. Please request a new OTP.");
-    }
-
-    const data = sessionSnap.data() as EmailOtpSession;
     const now = new Date();
-
-    // Verify channel restriction: A WhatsApp OTP must NEVER be accepted by the Email OTP path
-    if (data.channel !== "email") {
-      throw new Error("Invalid session channel for email verification.");
-    }
-
-    // Check expiration (10 minutes)
-    if (now > new Date(data.expiresAt)) {
-      await sessionDocRef.delete();
-      throw new Error("Verification code has expired. Please request a new OTP.");
-    }
-
-    // Compare submitted OTP using bcrypt.compare
-    const isMatch = await bcrypt.compare(otpCode.trim(), data.hashedOtp);
-
-    if (!isMatch) {
-      const updatedAttempts = (data.attempts || 0) + 1;
-
-      await adminDb.collection("otp_audits").add({
-        uid,
-        email: data.email,
-        channel: "email",
-        type: "pin_reset",
-        action: "VERIFY_FAILED",
-        timestamp: now.toISOString(),
-        attemptCount: updatedAttempts,
-      });
-
-      if (updatedAttempts >= 3) {
-        // Third failure: immediately delete/invalidate session permanently
-        await sessionDocRef.delete();
-        throw new Error("Too many failed attempts. This OTP session has been terminated. Please generate a new OTP.");
-      } else {
-        await sessionDocRef.update({ attempts: updatedAttempts });
-        const remaining = 3 - updatedAttempts;
-        throw new Error(`Incorrect verification code. You have ${remaining} attempts remaining before lockout.`);
+    const verification = await adminDb.runTransaction(async (transaction) => {
+      const sessionSnap = await transaction.get(sessionDocRef);
+      if (!sessionSnap.exists) {
+        return { success: false as const, error: "No active email verification session found. Please request a new OTP.", attempts: 0 };
       }
-    }
 
-    // Successful verification: mark session as verified and extend expiry so final PIN reset step can consume it
-    await sessionDocRef.update({
-      verified: true,
-      expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+      const data = sessionSnap.data() as EmailOtpSession;
+      if (data.channel !== "email" || data.type !== "pin_reset") {
+        return { success: false as const, error: "Invalid session channel or purpose for email verification.", attempts: Number(data.attempts) || 0 };
+      }
+
+      if (data.verified === true) {
+        return { success: true as const, email: data.email };
+      }
+
+      if (!data.expiresAt || now > new Date(data.expiresAt)) {
+        transaction.delete(sessionDocRef);
+        return { success: false as const, error: "Verification code has expired. Please request a new OTP.", attempts: Number(data.attempts) || 0 };
+      }
+
+      const attempts = Number(data.attempts) || 0;
+      if (attempts >= 3) {
+        transaction.delete(sessionDocRef);
+        return { success: false as const, error: "Too many failed attempts. This OTP session has been terminated. Please generate a new OTP.", attempts };
+      }
+
+      const isMatch = await bcrypt.compare(otpCode.trim(), data.hashedOtp);
+      if (!isMatch) {
+        const updatedAttempts = attempts + 1;
+        if (updatedAttempts >= 3) {
+          transaction.delete(sessionDocRef);
+          return { success: false as const, error: "Too many failed attempts. This OTP session has been terminated. Please generate a new OTP.", attempts: updatedAttempts };
+        }
+
+        transaction.update(sessionDocRef, { attempts: updatedAttempts });
+        return {
+          success: false as const,
+          error: `Incorrect verification code. You have ${3 - updatedAttempts} attempts remaining before lockout.`,
+          attempts: updatedAttempts,
+        };
+      }
+
+      transaction.update(sessionDocRef, {
+        verified: true,
+        expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+      });
+      return { success: true as const, email: data.email };
     });
 
-    // Audit Log for success
     await adminDb.collection("otp_audits").add({
       uid,
-      email: data.email,
+      email: verification.success ? verification.email : undefined,
       channel: "email",
       type: "pin_reset",
-      action: "VERIFY_SUCCESS",
+      action: verification.success ? "VERIFY_SUCCESS" : "VERIFY_ATTEMPT",
+      status: verification.success ? "SUCCESS" : "FAILED",
       timestamp: now.toISOString(),
+      ...(!verification.success ? { attemptCount: verification.attempts } : {}),
     });
 
+    if (!verification.success) throw new Error(verification.error);
     return {
       success: true,
       message: "Email OTP verified successfully.",

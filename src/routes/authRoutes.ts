@@ -27,8 +27,6 @@ router.post("/send-otp", async (req: Request, res: Response) => {
     res.status(200).json({
       success: true,
       message: result.message,
-      // In non-production environments, we return the code securely for automated tests/development verification
-      ...(result.devOtp ? { devOtpCode: result.devOtp } : {}),
     });
   } catch (error: any) {
     logger.error(`[AuthRoutes] send-otp failure: ${error.message}`);
@@ -80,7 +78,6 @@ router.post("/pin-reset-otp", async (req: any, res: Response) => {
       res.status(200).json({
         success: true,
         message: result.message || "PIN reset OTP sent to registered email address.",
-        ...(result.devOtp ? { devOtpCode: result.devOtp } : {}),
       });
       return;
     }

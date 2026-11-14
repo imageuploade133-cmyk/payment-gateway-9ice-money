@@ -66,6 +66,7 @@ NODE_ENV=development
 # Security & CORS
 GATEWAY_API_KEYS=your_api_key_1,your_api_key_2 # Comma-separated for key rotation
 JWT_SECRET=your_jwt_secret_here
+OTP_HMAC_SECRET=generate_a_random_secret_at_least_32_bytes
 CORS_ALLOWED_ORIGINS=https://yourwallet.vercel.app,http://localhost:3000
 
 # Flutterwave Configuration
@@ -87,6 +88,10 @@ FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFA
 ```
 
 ---
+
+## OTP security
+
+Set `OTP_HMAC_SECRET` to a cryptographically random value of at least 32 bytes (for example, generate one with `openssl rand -hex 32`). Keep it server-only and do not commit the real value. In production, the gateway validates this minimum length at startup. If omitted, the gateway temporarily falls back to `JWT_SECRET`, which must also be at least 32 bytes.
 
 ## Getting Started
 
