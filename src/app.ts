@@ -96,7 +96,7 @@ app.use(
 app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
-    service: "E-Tech Payment Gateway",
+    service: "9iceMoney Payment Gateway",
     status: "Running",
     version: "1.0.0",
     environment: env.NODE_ENV,

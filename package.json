@@ -1,7 +1,7 @@
 {
   "name": "payment-gateway",
   "version": "1.0.0",
-  "description": "Secure Payment Gateway microservice for E-Tech Wallet",
+  "description": "Secure payment gateway microservice for 9iceMoney",
   "main": "dist/server.js",
   "engines": {
     "node": ">=22.0.0"

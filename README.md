@@ -1,6 +1,6 @@
 # Payment Gateway Microservice
 
-A production-ready, enterprise-grade payment gateway microservice designed to act as a secure bridge between the E-Tech Wallet Next.js application (on Vercel) and payment providers (Flutterwave, Paystack, etc.).
+A production-ready, enterprise-grade payment gateway microservice designed to act as a secure bridge between the 9iceMoney Next.js application (on Vercel) and payment providers (Flutterwave, Paystack, etc.).
 
 This microservice runs on a Google Cloud VM with a Static IP to fulfill IP whitelisting requirements of payment providers.
 
@@ -161,7 +161,7 @@ npm test
   "bank_code": "044",
   "account_name": "SARAH SMITH CONNOR",
   "currency": "NGN",
-  "narration": "E-Tech Salary Payout",
+  "narration": "9iceMoney Salary Payout",
   "reference": "salary-999-2026-07"
 }
 ```
@@ -198,7 +198,7 @@ npm test
   "success": true,
   "bank_name": "Wema Bank",
   "account_number": "9981452901",
-  "account_name": "Sarah Connor - E-Tech",
+  "account_name": "Sarah Connor - 9iceMoney",
   "currency": "NGN",
   "reference": "va-user-123-999"
 }
