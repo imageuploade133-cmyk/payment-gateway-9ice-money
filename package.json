@@ -1,5 +1,5 @@
 {
-  "name": "payment-gateway",
+  "name": "9icemoney-payment-gateway",
   "version": "1.0.0",
   "description": "Secure payment gateway microservice for 9iceMoney",
   "main": "dist/server.js",
