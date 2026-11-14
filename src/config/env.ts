@@ -16,6 +16,7 @@ export interface EnvConfig {
   PAYSTACK_WEBHOOK_SECRET?: string;
   GATEWAY_API_KEYS: string[]; // List of valid API Keys supporting rotation
   JWT_SECRET: string;
+  OTP_HMAC_SECRET: string;
   CORS_ALLOWED_ORIGINS: string[];
   WHATSAPP_API_URL: string;
   WHATSAPP_API_KEY: string;
@@ -75,6 +76,13 @@ function validateEnv(): EnvConfig {
     JWT_SECRET = "default_secure_jwt_secret_998877";
   }
 
+  const OTP_HMAC_SECRET = (process.env.OTP_HMAC_SECRET || JWT_SECRET).trim();
+  if (Buffer.byteLength(OTP_HMAC_SECRET, "utf8") < 32) {
+    const errorMsg = "Configuration Error: OTP_HMAC_SECRET (or fallback JWT_SECRET) must be at least 32 bytes.";
+    if (NODE_ENV === "production") throw new Error(errorMsg);
+    logger.warn(errorMsg);
+  }
+
   // Load CORS Allowed Origins
   const rawAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS || "";
   const CORS_ALLOWED_ORIGINS = rawAllowedOrigins
@@ -128,6 +136,7 @@ function validateEnv(): EnvConfig {
     PAYSTACK_WEBHOOK_SECRET: process.env.PAYSTACK_WEBHOOK_SECRET,
     GATEWAY_API_KEYS,
     JWT_SECRET,
+    OTP_HMAC_SECRET,
     CORS_ALLOWED_ORIGINS,
     WHATSAPP_API_URL,
     WHATSAPP_API_KEY,
