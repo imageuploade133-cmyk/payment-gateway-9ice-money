@@ -4,7 +4,7 @@ import { PaystackInitializationService } from "../services/paystackInitializatio
 
 const initializeSchema = z.object({
   amount: z.number().finite().positive().max(100000000),
-  currency: z.string().trim().length(3).default("NGN"),
+  currency: z.literal("NGN").default("NGN"),
   email: z.string().trim().email().max(254),
   reference: z.string().trim().min(8).max(100).regex(/^[A-Za-z0-9._-]+$/, "Reference contains unsupported characters."),
   callback_url: z.string().url().max(2048).optional(),
