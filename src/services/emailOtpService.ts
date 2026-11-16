@@ -327,8 +327,7 @@ export class EmailOtpService {
    * Sends a signup email OTP using ONLY the backend VM environment credentials.
    * The CPANEL email_connect document is intentionally never consulted here.
    */
-  public static async sendSignupOtp(email: string): Promise<{ message: string; devOtp?: string }> {
-    const isProd = env.NODE_ENV === "production";
+  public static async sendSignupOtp(email: string): Promise<{ message: string }> {
     const emailApiUrl = env.EMAIL_API_URL;
     const emailApiKey = env.EMAIL_API_KEY;
     const emailInstanceId = env.EMAIL_INSTANCE_ID || "";
@@ -438,7 +437,6 @@ export class EmailOtpService {
 
     return {
       message: "Verification code sent to your email address successfully!",
-      ...(!isProd ? { devOtp: rawOtp } : {}),
     };
   }
 
