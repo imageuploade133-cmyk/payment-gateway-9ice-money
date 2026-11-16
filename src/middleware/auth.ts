@@ -51,8 +51,6 @@ export async function gatewayAuthMiddleware(
       "/api/auth/verify-otp",
       "/api/auth/pin-reset-otp",
       "/api/auth/pin-verify-otp",
-      "/api/auth/dispatch-otp",
-      "/auth/dispatch-otp",
       "/send-otp",
       "/verify-otp",
       "/pin-reset-otp",
