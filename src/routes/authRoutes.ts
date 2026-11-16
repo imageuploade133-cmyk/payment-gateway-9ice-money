@@ -69,7 +69,6 @@ router.post("/dispatch-otp", async (req: Request, res: Response) => {
   }
 });
 
-
 /**
  * Endpoint to generate and send a WhatsApp OTP
  * Protected via S2S gateway authentication
@@ -88,7 +87,6 @@ router.post("/send-otp", async (req: Request, res: Response) => {
         success: true,
         channel: "email",
         message: result.message,
-
       });
       return;
     }
@@ -102,8 +100,6 @@ router.post("/send-otp", async (req: Request, res: Response) => {
     res.status(200).json({
       success: true,
       message: result.message,
-      // In non-production environments, we return the code securely for automated tests/development verification
-
     });
   } catch (error: any) {
     logger.error(`[AuthRoutes] send-otp failure: ${error.message}`);
@@ -144,7 +140,6 @@ router.post("/verify-otp", async (req: Request, res: Response) => {
     res.status(400).json({ success: false, message: error.message });
   }
 });
-
 
 /**
  * Endpoint to trigger a PIN reset OTP based on user token
@@ -260,6 +255,5 @@ router.post("/pin-verify-otp", async (req: any, res: Response) => {
     res.status(400).json({ success: false, message: error.message });
   }
 });
-
 
 export default router;
