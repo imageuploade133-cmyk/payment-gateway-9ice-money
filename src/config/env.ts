@@ -1,7 +1,13 @@
 import dotenv from "dotenv";
 import logger from "./logger";
 
-dotenv.config();
+const dotenvResult = dotenv.config();
+
+// Prefer the VM .env email endpoint over stale PM2-inherited values.
+// All other environment settings retain their existing 9iceMoney precedence.
+if (dotenvResult.parsed?.EMAIL_API_URL) {
+  process.env.EMAIL_API_URL = dotenvResult.parsed.EMAIL_API_URL;
+}
 
 export interface EnvConfig {
   PORT: number;
