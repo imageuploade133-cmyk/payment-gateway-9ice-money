@@ -449,7 +449,7 @@ export class EmailOtpService {
     if (!adminDb) throw new Error("Firestore Admin Database not initialized.");
     const normalizedEmail = String(email || "").trim().toLowerCase();
     const submittedOtp = String(otpCode || "").trim();
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(normalizedEmail)) throw new Error("A valid email address is required.");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) throw new Error("A valid email address is required.");
     if (!/^[0-9]{6}$/.test(submittedOtp)) throw new Error("A valid 6-digit OTP code is required.");
 
     const otpRef = adminDb.collection("signup_email_otps").doc(normalizedEmail);
