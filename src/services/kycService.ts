@@ -220,6 +220,85 @@ export class KycService {
   }
 
   /**
+   * Approves KYC once and provisions each selected, currently supported provider independently.
+   * A provider failure does not roll back another provider's successful account.
+   */
+  public static async approveKycForProviders(
+    userId: string,
+    adminUid: string,
+    requestId: string,
+    providers: Array<"flutterwave" | "squad">
+  ): Promise<any> {
+    if (!adminDb) throw new Error("Firestore Admin Database is not initialized.");
+    const selected = Array.from(new Set((providers || []).filter((p) => p === "flutterwave" || p === "squad")));
+    if (selected.length === 0) throw new Error("Select at least one supported provider (Flutterwave or Squad).");
+
+    const submissionRef = adminDb.collection("kyc_submissions").doc(userId);
+    const subSnap = await submissionRef.get();
+    if (!subSnap.exists) throw new Error("KYC submission record not found.");
+    const subData = subSnap.data() as KycSubmission;
+
+    const existingAccounts = await Promise.all(selected.map(async (provider) => {
+      const snap = await adminDb!.collection("wallet_accounts").doc(userId).collection("accounts").doc(provider).get();
+      return [provider, snap.exists] as const;
+    }));
+    const allAlreadyProvisioned = existingAccounts.every(([, exists]) => exists);
+    if (subData.status === "VERIFIED" && allAlreadyProvisioned) {
+      return { success: true, status: "VERIFIED", providers: Object.fromEntries(existingAccounts.map(([p]) => [p, "ACTIVE"])) };
+    }
+
+    await adminDb.runTransaction(async (transaction) => {
+      const fresh = await transaction.get(submissionRef);
+      if (!fresh.exists) throw new Error("KYC submission record not found.");
+      const status = String(fresh.data()?.status || "");
+      if (!["PENDING", "PROVISIONING_FAILED", "PROCESSING", "VERIFIED"].includes(status)) {
+        throw new Error(`Cannot approve KYC while submission is in status: ${status}`);
+      }
+      transaction.set(submissionRef, { status: "PROCESSING", reviewedBy: adminUid, reviewedAt: new Date().toISOString() }, { merge: true });
+    });
+
+    const outcomes: Record<string, { status: string; account?: any; error?: string }> = {};
+    for (const provider of selected) {
+      try {
+        const result = await this.provisionStaticVirtualAccount(userId, subData, adminUid, `${requestId}-${provider}`, provider);
+        outcomes[provider] = { status: "ACTIVE", account: result.account };
+      } catch (error: any) {
+        outcomes[provider] = { status: "FAILED", error: error?.message || "Provider provisioning failed." };
+        logger.error(`[KycService] ${provider} provisioning failed for ${userId}: ${outcomes[provider].error}`);
+      }
+    }
+
+    const successful = Object.values(outcomes).some((item) => item.status === "ACTIVE");
+    const finalStatus = successful ? "VERIFIED" : "PROVISIONING_FAILED";
+    const now = new Date().toISOString();
+    await submissionRef.set({
+      status: finalStatus,
+      providerProvisioning: outcomes,
+      assignedProviders: selected,
+      reviewedBy: adminUid,
+      reviewedAt: now,
+      updatedAt: now,
+    }, { merge: true });
+    await adminDb.collection("users").doc(userId).set({
+      kycStatus: finalStatus,
+      assignedProviders: selected,
+      providerProvisioning: outcomes,
+      updatedAt: now,
+    }, { merge: true });
+    await adminDb.collection("provider_assignments").doc(userId).set({
+      userId,
+      providers: Object.fromEntries(selected.map((provider) => [provider, {
+        status: outcomes[provider].status,
+        error: outcomes[provider].error || null,
+        updatedAt: now,
+      }])),
+      updatedAt: now,
+    }, { merge: true });
+
+    return { success: successful, status: finalStatus, providers: outcomes, partialSuccess: successful && Object.values(outcomes).some((item) => item.status !== "ACTIVE") };
+  }
+
+  /**
    * Approves a pending KYC submission and triggers idempotency-safe virtual account provisioning
    */
   public static async approveKyc(userId: string, adminUid: string, requestId: string, provider: "flutterwave" | "squad"): Promise<any> {
@@ -563,19 +642,26 @@ export class KycService {
         updatedAt: new Date().toISOString(),
       });
 
-      // Update legacy main document (maintaining default account number details for backward compatibility)
-      await adminDb!.collection("wallet_accounts").doc(userId).set({
+      // Keep the legacy account document as a stable primary account for old clients.
+      // Additional provider accounts live only in wallet_accounts/{uid}/accounts/{provider}.
+      const legacyAccountRef = adminDb!.collection("wallet_accounts").doc(userId);
+      const legacyAccountSnap = await legacyAccountRef.get();
+      const legacyData = legacyAccountSnap.data() || {};
+      const legacyUpdate: Record<string, any> = {
         userId,
-        accountNumber: allocatedAccount.account_number,
-        bankName: allocatedAccount.bank_name,
-        accountName: allocatedAccount.account_name,
-        currency: allocatedAccount.currency || "NGN",
-        provider,
         isPermanent: true,
         status: "active",
         [`provider_${provider}`]: true,
         updatedAt: new Date().toISOString(),
-      }, { merge: true });
+      };
+      if (!legacyAccountSnap.exists || !legacyData.accountNumber) {
+        legacyUpdate.accountNumber = allocatedAccount.account_number;
+        legacyUpdate.bankName = allocatedAccount.bank_name;
+        legacyUpdate.accountName = allocatedAccount.account_name;
+        legacyUpdate.currency = allocatedAccount.currency || "NGN";
+        legacyUpdate.provider = provider;
+      }
+      await legacyAccountRef.set(legacyUpdate, { merge: true });
 
       // Update user state and submission state
       await adminDb!.collection("users").doc(userId).set({
