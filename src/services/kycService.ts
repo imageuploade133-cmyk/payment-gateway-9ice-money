@@ -260,7 +260,7 @@ export class KycService {
     const outcomes: Record<string, { status: string; account?: any; error?: string }> = {};
     for (const provider of selected) {
       try {
-        const result = await this.provisionStaticVirtualAccount(userId, subData, adminUid, `${requestId}-${provider}`, provider);
+        const result = await this.provisionStaticVirtualAccount(userId, subData, adminUid, `${requestId}-${provider}`, provider, true);
         outcomes[provider] = { status: "ACTIVE", account: result.account };
       } catch (error: any) {
         outcomes[provider] = { status: "FAILED", error: error?.message || "Provider provisioning failed." };
@@ -466,7 +466,8 @@ export class KycService {
     subData: KycSubmission,
     adminUid: string,
     requestId: string,
-    provider: "flutterwave" | "squad"
+    provider: "flutterwave" | "squad",
+    suppressApprovalNotification = false
   ): Promise<any> {
     const hashedId = this.hashIdentityNumber(subData.documentNumber);
     const submissionRef = adminDb!.collection("kyc_submissions").doc(userId);
@@ -688,8 +689,9 @@ export class KycService {
         requestId
       });
 
-      // Send KYC Approved Notification
-      try {
+      // Send KYC Approved Notification only for standalone single-provider flows.
+      // Multi-provider orchestration sends one consolidated result through the admin API.
+      if (!suppressApprovalNotification) try {
         const { NotificationService } = require("./notificationService");
         await NotificationService.sendPushNotification(userId, {
           title: "🎉 KYC Identity Approved",
