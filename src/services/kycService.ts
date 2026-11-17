@@ -425,7 +425,7 @@ export class KycService {
     }
 
     const subData = subSnap.data() as KycSubmission;
-    if (subData.status !== "PROVISIONING_FAILED" && subData.status !== "PROCESSING") {
+    if (subData.status !== "PROVISIONING_FAILED" && subData.status !== "PROCESSING" && subData.status !== "VERIFIED") {
       throw new Error(`Cannot retry provisioning for user in status: ${subData.status}`);
     }
 
@@ -433,10 +433,10 @@ export class KycService {
     await adminDb.runTransaction(async (transaction) => {
       const freshSnap = await transaction.get(submissionRef);
       const freshData = freshSnap.data() as KycSubmission;
-      if (freshData.status !== "PROVISIONING_FAILED" && freshData.status !== "PROCESSING") {
+      if (freshData.status !== "PROVISIONING_FAILED" && freshData.status !== "PROCESSING" && freshData.status !== "VERIFIED") {
         throw new Error("Another action is already processing this request.");
       }
-      if (freshData.status === "PROVISIONING_FAILED") {
+      if (freshData.status === "PROVISIONING_FAILED" || freshData.status === "VERIFIED") {
         transaction.update(submissionRef, {
           status: "PROCESSING",
           reviewedBy: adminUid,
