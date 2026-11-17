@@ -397,38 +397,42 @@ export class AdminController {
   public static async approveKycSubmission(req: AuthenticatedRequest, res: Response): Promise<void> {
     const reqId = req.requestId;
     const { userId } = req.params;
-    const { provider } = req.body;
     const adminUid = req.user?.uid || "unknown-admin";
+    const rawProviders = Array.isArray(req.body?.providers) ? req.body.providers : (req.body?.provider ? [req.body.provider] : []);
 
     try {
       if (!userId) {
         res.status(400).json({ success: false, message: "User ID parameter is required." });
         return;
       }
-
-      if (!provider || (provider !== "flutterwave" && provider !== "squad")) {
+      const providers = Array.from(new Set(rawProviders.map((p: unknown) => String(p).trim().toLowerCase())));
+      if (providers.length === 0 || providers.some((p: string) => !["flutterwave", "squad"].includes(p))) {
         res.status(400).json({
           success: false,
-          message: "A valid provider ('flutterwave' or 'squad') must be explicitly selected."
+          message: "Select one or more supported providers: Flutterwave and/or Squad. 9PSB provisioning remains disabled until its secure API contract is configured."
         });
         return;
       }
 
-      logger.info(`[AdminController] Admin ${adminUid} approving KYC for user: ${userId} via provider: ${provider} | reqId=${reqId}`);
-
-      const result = await KycService.approveKyc(userId, adminUid, `req-${reqId}-${Date.now()}`, provider);
-
-      res.status(200).json({
-        success: true,
-        message: `User KYC successfully approved and static virtual account provisioned via ${provider}!`,
+      logger.info(`[AdminController] Admin ${adminUid} approving KYC for user: ${userId} via providers: ${providers.join(",")} | reqId=${reqId}`);
+      const result = await KycService.approveKycForProviders(
+        userId,
+        adminUid,
+        `req-${reqId}-${Date.now()}`,
+        providers as Array<"flutterwave" | "squad">
+      );
+      res.status(result.success ? 200 : 207).json({
+        success: result.success,
+        message: result.partialSuccess
+          ? "KYC verified. Some provider accounts were provisioned; failed providers can be retried."
+          : result.success
+            ? "KYC approved and selected provider accounts provisioned."
+            : "KYC identity approval completed, but provider provisioning failed. Retry is available.",
         data: result
       });
     } catch (error: any) {
       logger.error(`[AdminController] approveKycSubmission failure: ${error.message} | reqId=${reqId}`);
-      res.status(400).json({
-        success: false,
-        message: error.message || "Failed to approve KYC verification."
-      });
+      res.status(400).json({ success: false, message: error.message || "Failed to approve KYC verification." });
     }
   }
 
